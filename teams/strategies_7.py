@@ -38,16 +38,16 @@ NUM_TO_CARD = {
     for i in range(NUM_CARDS)
 }
 
-REV_CARD_TO_NUM = {value:key for key, value in NUM_TO_CARD.items()}
+CARD_TO_NUM = {value:key for key, value in NUM_TO_CARD.items()}
 
 MU = 25.5
-SIGMA = 100
+SIGMA = 100000
 
 def gaussian_pdf(x, mu, sigma):
     return (1 / (sigma * math.sqrt(2 * math.pi))) * math.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 
-def update_prob_based_on_correct_answers(player,probability_dict, guessed_cards, correct_answers):
+def update_prob_based_on_correct_answers(player, probability_dict, guessed_cards, correct_answers):
     """
     Updates the probabilities for the cards in the guessed_cards list.
 
@@ -74,8 +74,9 @@ def update_prob_based_on_correct_answers(player,probability_dict, guessed_cards,
         probability_dict[card] *= perc_wrong
 
     normalize_probabilities(player)
-    print(player.name)
-    print(probability_dict)
+    if player.name == "North":
+        print(player.name)
+        print(probability_dict)
 
 def normalize(probability_dict):
     total_prob = sum(probability_dict.values())
@@ -86,15 +87,58 @@ def normalize(probability_dict):
 def playing(player, deck):
    
     turn = len(player.played_cards) + 1
+    if turn == 1:
+        player.mincard = 0
+        player.maxcard = 51
+        player.num_to_card = {
+            i: (SUITS[i // 13], VALUES[i % 13])  # i % 13 gives the card value, i // 13 gives the suit
+            for i in range(NUM_CARDS)
+        }
+        player.card_to_num = {value:key for key, value in player.num_to_card.items()}
 
     flag =  (turn % 2)
 
+    # if flag == 0:
+    #     flag = 1
+    #     return max_first(player, deck)
+    # else:
+    #     flag = 0 
+    #     return min_first(player, deck)
+
     if flag == 0:
         flag = 1
-        return max_first(player, deck)
+        return player.maxcard
     else:
-        flag = 0 
-        return min_first(player, deck)
+        flag = 0
+        player.mincard, player.maxcard = get_minmax_new(player) 
+        return player.mincard
+    
+    
+def get_largest_gap(a):
+    maxgap = 0
+    maxmin = 0
+    maxmax = 0
+    asorted = sorted(a)
+    asorted.append(51 + asorted[0])
+    for i, j in enumerate(asorted[:-1]):
+        d = asorted[i+1] - asorted[i]
+        if d > maxgap:
+            if i < len(a) - 1:
+                maxmax = a.index(asorted[i])
+                maxmin = a.index(asorted[i + 1])
+                maxgap = d
+            else:
+                maxmax = a.index(abs(asorted[i+1] - 51))
+                maxmin = a.index(asorted[i])
+                maxgap = d
+    return (maxmin, maxmax)
+
+def get_minmax_new(player):
+    if not player.hand:
+        return None
+    cards = [player.card_to_num[(card.suit, card.value)] for card in player.hand]
+    return get_largest_gap(cards)
+    
 
 def max_first(player, deck):
     """
@@ -117,11 +161,11 @@ def max_first(player, deck):
 
     highest_card = -1
     for i, card in enumerate(player.hand):
-        card_value = REV_CARD_TO_NUM[(card.suit, card.value)]
+        card_value = player.card_to_num[(card.suit, card.value)]
         if card_value > highest_card:
             highest_card = card_value
             max_index = i
-    print(highest_card, NUM_TO_CARD[highest_card])
+    print(highest_card, player.num_to_card[highest_card])
     return max_index
 
 def min_first(player, deck):
@@ -142,7 +186,7 @@ def min_first(player, deck):
 
     lowest_card = 52
     for i, card in enumerate(player.hand):
-        card_value = REV_CARD_TO_NUM[(card.suit, card.value)]
+        card_value = player.card_to_num[(card.suit, card.value)]
         if card_value < lowest_card:
             lowest_card = card_value
             min_index = i
@@ -162,7 +206,7 @@ def zero_probabilities(player, cards):
     for card in cards:
         suit = card.suit
         val = card.value
-        num = REV_CARD_TO_NUM[(suit, val)]
+        num = player.card_to_num[(suit, val)]
         player.card_probabilities[num] = 0.0
     normalize_probabilities(player)
 
@@ -170,7 +214,7 @@ def zero_below_card(player, card):
     # for each card below the card, set probability to 0
     suit = card.suit
     val = card.value
-    num = REV_CARD_TO_NUM[(suit, val)]
+    num = player.card_to_num[(suit, val)]
 
     logging.debug(f"The lowest card number is (in number form) {num}")
 
@@ -183,7 +227,7 @@ def zero_above_card(player, card):
     # for each card above the card, set probability to 0
     suit = card.suit
     val = card.value
-    num = REV_CARD_TO_NUM[(suit, val)]
+    num = player.card_to_num[(suit, val)]
 
     logging.debug(f"The highest card number is (in number form) {num}")
     
@@ -201,15 +245,29 @@ def choose_cards(player, round, max_probs=False):
             replace=False)
     else:
         choices = sorted(player.card_probabilities.keys(), key=lambda x:player.card_probabilities[x])[-(13 - round):]
-    card_choices = [NUM_TO_CARD[card] for card in choices]
+    card_choices = [player.num_to_card[card] for card in choices]
     card_choices_obj = [Card(card[0], card[1]) for card in card_choices]
     return card_choices_obj
 
+def shift_dict(d, last_min):
+    new_dict = {}
+    
+    # Map all keys using modulo to wrap them into the 0-51 range
+    for k, v in d.items():
+        new_key = (k + (52 - last_min)) % 52  # Use modulo 52 to "wrap" the values
+        new_dict[new_key] = v
+    
+    return new_dict
+
 
 def guessing(player, cards, round):
+    
+    
     global player_guesses
     if round == 1:
         # global player.card_probabilities
+        player.last_min = 0
+        player.last_max = 51
         player.card_probabilities = {num:gaussian_pdf(num, MU, SIGMA) for num in range(NUM_CARDS)}
         zero_probabilities(player, player.hand)
         
@@ -221,14 +279,26 @@ def guessing(player, cards, round):
     last_exposed_card = player.exposed_cards[TEAMMATE[player.name]][-1]
 
     # # if even round, guess the highest card
+    # if round % 2 == 0:
+    #     logging.debug(f"Zeroing highest card and above")
+    #     print(f"Player {player.name} zeroing above {last_exposed_card}")
+    #     zero_above_card(player, last_exposed_card)
+    # else:
+    #     logging.debug(f"Zeroing below card and above")
+    #     print(f"Player {player.name} zeroing below {last_exposed_card}")
+    #     zero_below_card(player, last_exposed_card)
+
     if round % 2 == 0:
-        logging.debug(f"Zeroing highest card and above")
-        print(f"Player {player.name} zeroing above {last_exposed_card}")
-        zero_above_card(player, last_exposed_card)
+        player.last_max = player.card_to_num[(last_exposed_card.suit, last_exposed_card.value)]
+        shift = (52 - player.last_min)
+        new_max = (player.last_max + shift) % 52 # This should never be over 51 though
+        player.card_probabilities = shift_dict(player.card_probabilities, player.last_min)
+        player.num_to_card = shift_dict(player.num_to_card, player.last_min)
+        player.card_to_num = {value:key for key, value in player.num_to_card.items()}
+        zero_above_card(player, Card(player.num_to_card[new_max][0], player.num_to_card[new_max][1]))
+
     else:
-        logging.debug(f"Zeroing below card and above")
-        print(f"Player {player.name} zeroing below {last_exposed_card}")
-        zero_below_card(player, last_exposed_card)
+        player.last_min = player.card_to_num[(last_exposed_card.suit, last_exposed_card.value)]
 
     if round > 1:
         print(f"After round {round}, number of cvals : {player.cVals}")
@@ -238,7 +308,7 @@ def guessing(player, cards, round):
         previous_guesses = player_guesses[player.name].get(round - 1, [])
         print(correct_answers)
         print(len(previous_guesses))
-        previous_guess_indices = [REV_CARD_TO_NUM[(card.suit, card.value)] for card in previous_guesses]
+        previous_guess_indices = [player.card_to_num[(card.suit, card.value)] for card in previous_guesses]
         update_prob_based_on_correct_answers(player, player.card_probabilities, previous_guess_indices, correct_answers)
 
 
